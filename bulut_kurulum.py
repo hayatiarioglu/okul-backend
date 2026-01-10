@@ -5,11 +5,12 @@ from datetime import datetime
 app = create_app()
 
 with app.app_context():
-    print("☁️ VERİTABANI KURULUYOR...")
+    print("☁️ BULUT VERİTABANI KURULUYOR...")
     db.create_all()
     
     if not User.query.filter_by(username='deneme').first():
         print("🌱 Veriler ekleniyor...")
+        
         # Kullanıcılar
         u = User(username='deneme', email='test@okul.com', role='student'); u.set_password('1234')
         h = User(username='hoca', email='hoca@okul.com', role='teacher'); h.set_password('1234')
@@ -22,15 +23,15 @@ with app.app_context():
         db.session.commit()
         u.enrolled_classes.append(c)
         
-        # Konu
+        # Konu ve İlerleme
         t = Topic(name="Veritabanı Bağlantısı", classroom_id=c.id)
         db.session.add(t)
         db.session.commit()
         
-        # İlerleme (Kırmızı Kutu)
         p = Progress(student_id=u.id, topic_id=t.id, status='missing', last_reviewed=datetime.utcnow())
         db.session.add(p)
         db.session.commit()
+        
         print("✅ TAMAMLANDI! Kullanıcı: deneme / 1234")
     else:
-        print("⚠️ Zaten veri var.")
+        print("⚠️ Zaten veri var, dokunulmadı.")
