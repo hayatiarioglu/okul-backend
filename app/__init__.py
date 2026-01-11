@@ -9,7 +9,7 @@ from config import Config
 db = SQLAlchemy()
 migrate = Migrate()
 login_manager = LoginManager() # <-- YENİ GELDİ
-admin = Admin(name='Okul Yönetim', template_mode='bootstrap3')
+admin = Admin(name='Okul Yönetim')
 
 def create_app(config_class=Config):
     app = Flask(__name__)
