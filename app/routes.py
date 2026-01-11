@@ -80,3 +80,15 @@ def get_classes():
             'topic_count': c.topics.count()
         })
     return jsonify({'success': True, 'classes': output})
+
+# --- ACİL DURUM BUTONU: VERİTABANI SIFIRLAMA ---
+@bp.route('/sifirla-kardes', methods=['GET'])
+def db_sifirla():
+    try:
+        from app import db
+        # Tüm tabloları sil ve yeniden oluştur (512 karakterlik yeni haliyle)
+        db.drop_all()
+        db.create_all()
+        return jsonify({'success': True, 'message': 'VERİTABANI SIFIRLANDI VE GENİŞLETİLDİ!'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
