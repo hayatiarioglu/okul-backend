@@ -1,94 +1,99 @@
 from flask import Blueprint, jsonify, request
 from app import db
-from app.models import User, Classroom
-from flask_login import login_user, logout_user
+from app.models import User, Classroom, Topic, Progress
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
-# --- 1. KAYIT OL (DÜZELTİLDİ: Email artık zorunlu değil) ---
+# 1. GİRİŞ & KAYIT (Standart)
 @bp.route('/register', methods=['POST'])
 def register():
     data = request.get_json() or {}
-    
-    # Sadece Kullanıcı Adı ve Şifre zorunlu olsun
-    if 'username' not in data or 'password' not in data:
-        return jsonify({'success': False, 'message': 'Kullanıcı adı ve şifre şart!'}), 400
-
-    # Kullanıcı adı zaten var mı?
-    if User.query.filter_by(username=data['username']).first():
-        return jsonify({'success': False, 'message': 'Bu kullanıcı adı zaten alınmış.'}), 400
-        
-    # --- İŞTE SİHİRLİ DOKUNUŞ ---
-    # Eğer mobil uygulama email göndermediyse, biz uyduralım:
-    gelen_email = data.get('email')
-    if not gelen_email:
-        gelen_email = f"{data['username']}@okul.com" 
-    # ----------------------------
-
-    # Email kontrolü (Artık uydurma email olduğu için hata vermez)
-    if User.query.filter_by(email=gelen_email).first():
-         # Eğer uydurduğumuz email bile varsa sonuna rastgele sayı ekleyelim
-        import random
-        gelen_email = f"{data['username']}{random.randint(1,999)}@okul.com"
-
-    # Yeni kullanıcı oluştur
-    user = User(username=data['username'], email=gelen_email, role='student')
+    if User.query.filter_by(username=data.get('username')).first():
+        return jsonify({'success': False, 'message': 'Kullanıcı adı dolu'}), 400
+    user = User(username=data['username'], email=f"{data['username']}@okul.com", role=data.get('role', 'student'))
     user.set_password(data['password'])
-    
-    try:
-        db.session.add(user)
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Kayıt başarılı! Giriş yapabilirsin.'}), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': f'Sunucu Hatası: {str(e)}'}), 500
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Kayıt Başarılı'})
 
-# --- 2. GİRİŞ YAP (Login) ---
 @bp.route('/login', methods=['POST'])
 def login():
     data = request.get_json() or {}
+    user = User.query.filter_by(username=data.get('username')).first()
+    if user and user.check_password(data.get('password')):
+        return jsonify({'success': True, 'user': {'id': user.id, 'username': user.username, 'role': user.role}})
+    return jsonify({'success': False, 'message': 'Hatalı giriş'}), 401
 
-    if 'username' not in data or 'password' not in data:
-        return jsonify({'success': False, 'message': 'Kullanıcı adı ve şifre girin.'}), 400
+# --- 2. DASHBOARD (ANA SAYFA VERİLERİ) ---
+@bp.route('/dashboard/<username>', methods=['GET'])
+def get_dashboard(username):
+    user = User.query.filter_by(username=username).first()
+    if not user: return jsonify({'success': False}), 404
 
-    user = User.query.filter_by(username=data['username']).first()
+    # A. Eksik Konular (Kırmızı Alan)
+    eksikler = []
+    missing_progress = Progress.query.filter_by(student_id=user.id, status='missing').all()
+    for p in missing_progress:
+        topic = Topic.query.get(p.topic_id)
+        if topic:
+            eksikler.append({'konu': topic.name, 'ders': topic.classroom.name})
 
-    if user and user.check_password(data['password']):
-        login_user(user)
-        return jsonify({
-            'success': True, 
-            'message': 'Giriş başarılı', 
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'role': user.role
-            }
-        })
-    
-    return jsonify({'success': False, 'message': 'Hatalı kullanıcı adı veya şifre.'}), 401
-
-# --- 3. DERSLERİ GETİR ---
-@bp.route('/classes', methods=['GET'])
-def get_classes():
+    # B. Ders İlerlemeleri
+    dersler_data = []
     classes = Classroom.query.all()
-    output = []
     for c in classes:
-        output.append({
-            'id': c.id,
-            'name': c.name,
-            'teacher': c.teacher_name,
-            'topic_count': c.topics.count()
+        total_topics = c.topics.count()
+        completed = Progress.query.join(Topic).filter(
+            Progress.student_id == user.id,
+            Progress.status == 'done',
+            Topic.classroom_id == c.id
+        ).count()
+        
+        yuzde = int((completed / total_topics) * 100) if total_topics > 0 else 0
+        dersler_data.append({
+            'id': c.id, 'name': c.name, 'teacher': c.teacher_name,
+            'progress': yuzde, 'total': total_topics
         })
-    return jsonify({'success': True, 'classes': output})
 
-# --- ACİL DURUM BUTONU: VERİTABANI SIFIRLAMA ---
-@bp.route('/sifirla-kardes', methods=['GET'])
-def db_sifirla():
-    try:
-        from app import db
-        # Tüm tabloları sil ve yeniden oluştur (512 karakterlik yeni haliyle)
-        db.drop_all()
-        db.create_all()
-        return jsonify({'success': True, 'message': 'VERİTABANI SIFIRLANDI VE GENİŞLETİLDİ!'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
+    return jsonify({'success': True, 'eksikler': eksikler, 'dersler': dersler_data})
+
+# --- 3. DERS DETAYI VE KONULAR ---
+@bp.route('/class/<int:class_id>/<username>', methods=['GET'])
+def get_class_detail(class_id, username):
+    user = User.query.filter_by(username=username).first()
+    classroom = Classroom.query.get(class_id)
+    
+    topics_data = []
+    for topic in classroom.topics:
+        # Bu öğrenci bu konuda ne yapmış?
+        prog = Progress.query.filter_by(student_id=user.id, topic_id=topic.id).first()
+        status = prog.status if prog else 'none' # none, done, missing
+        
+        topics_data.append({
+            'id': topic.id, 'name': topic.name, 'status': status
+        })
+
+    return jsonify({'success': True, 'class_name': classroom.name, 'topics': topics_data})
+
+# --- 4. İLERLEME GÜNCELLEME (BUTONA BASINCA) ---
+@bp.route('/progress/update', methods=['POST'])
+def update_progress():
+    data = request.get_json()
+    user = User.query.filter_by(username=data['username']).first()
+    topic_id = data['topic_id']
+    new_status = data['status'] # 'done', 'missing', 'none'
+
+    # Eski kaydı bul
+    prog = Progress.query.filter_by(student_id=user.id, topic_id=topic_id).first()
+
+    if new_status == 'none':
+        if prog: db.session.delete(prog) # Kaydı sil (sıfırla)
+    else:
+        if prog:
+            prog.status = new_status # Güncelle
+        else:
+            new_prog = Progress(student_id=user.id, topic_id=topic_id, status=new_status)
+            db.session.add(new_prog) # Yeni ekle
+            
+    db.session.commit()
+    return jsonify({'success': True})
